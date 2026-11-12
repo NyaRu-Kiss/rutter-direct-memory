@@ -8,6 +8,7 @@ const crypto = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 
 const files = ['hook.cjs', 'install.cjs', 'mcp.cjs', 'transcript.cjs', 'upload.cjs'];
+const DEFAULT_SERVER = 'https://efficiencybyai.com/knowledge';
 
 function installBundle(bundle, env = process.env) {
   const manifest = JSON.parse(fs.readFileSync(path.join(bundle, 'manifest.json'), 'utf8'));
@@ -52,13 +53,14 @@ function main(argv = process.argv.slice(2), { bundle = path.resolve(__dirname, '
   const args = installer.parseArgs(forwarded);
   if (!['both', 'codex', 'claude'].includes(args.client)) throw new Error('client must be both, codex or claude.');
   if (args.help) {
-    process.stdout.write('Usage: rutter-direct-memory [--server https://memory.example.com] [--client both|codex|claude] [--reconfigure] [--uninstall]\nInstalls Hook and MCP from this package. Requires a Memory user credential; no model API key or SSH password.\n');
+    process.stdout.write(`Usage: rutter-direct-memory [--server https://memory.example.com] [--client both|codex|claude] [--reconfigure] [--uninstall]\nDefaults to ${DEFAULT_SERVER}/v3 (Service ID: default). Enter only your Memory User_Key; no SSH or model API key required. Use --server for another deployment.\n`);
     return 0;
   }
-  if (server !== undefined) server = require(path.join(bundle, 'bootstrap.cjs')).baseUrl(server);
+  const quickSetup = server === undefined;
+  server = require(path.join(bundle, 'bootstrap.cjs')).baseUrl(server ?? DEFAULT_SERVER);
   const release = installBundle(bundle, env);
   const result = spawnSync(process.execPath, [path.join(release, 'install.cjs'), ...forwarded], {
-    stdio: 'inherit', env: { ...env, ...(server ? { RUTTER_DIRECT_MEMORY_SERVER: server } : {}) },
+    stdio: 'inherit', env: { ...env, RUTTER_DIRECT_MEMORY_SERVER: server, RUTTER_DIRECT_MEMORY_QUICK_SETUP: quickSetup ? '1' : '0' },
   });
   if (result.error) throw result.error;
   return result.status ?? 1;
@@ -68,4 +70,4 @@ if (require.main === module) {
   try { process.exitCode = main(); }
   catch (error) { process.stderr.write(`${error.message}\n`); process.exitCode = 1; }
 }
-module.exports = { installBundle, main };
+module.exports = { installBundle, main, DEFAULT_SERVER };

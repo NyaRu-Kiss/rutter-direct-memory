@@ -227,7 +227,7 @@ async function verifyConnection(config, fetcher = fetch) {
       body: '{}',
     });
   } catch {
-    throw new Error('无法连接 Memory 服务，配置未保存。请检查地址、网络；使用 SSH 转发时请保持转发运行，然后重新安装。');
+    throw new Error('无法连接 Memory 服务，配置未保存。请检查 API 地址、网络和 HTTPS 服务状态后重新安装。');
   }
   let envelope;
   try { envelope = await response.json(); } catch {
@@ -244,10 +244,17 @@ async function verifyConnection(config, fetcher = fetch) {
 }
 
 async function configureConnection(configFile, { reconfigure = false, prompt = promptLine, fetcher = fetch, output = process.stdout, env = process.env } = {}) {
+  const defaultUrl = env.RUTTER_DIRECT_MEMORY_SERVER ? `${env.RUTTER_DIRECT_MEMORY_SERVER}/v3` : '';
+  const quickSetup = env.RUTTER_DIRECT_MEMORY_QUICK_SETUP === '1' && Boolean(defaultUrl);
+  if (quickSetup) output.write(`直接连接 ${defaultUrl}（Service ID：default），无需 SSH。\n`);
   if (!reconfigure && fs.existsSync(configFile)) {
     let config;
     try { config = readConfig(configFile); validateNewConfig(config); }
     catch { config = undefined; output.write('已有 Memory 配置格式无效，请重新填写；验证成功前保留原配置。\n'); }
+    if (config && quickSetup && (config.service_url !== defaultUrl || config.service_id !== 'default')) {
+      output.write('检测到其他地址或实例的旧配置。本次将接入上述 HTTPS 服务，请填写该服务的 User_Key；验证成功前保留旧配置。\n');
+      config = undefined;
+    }
     if (config) {
       try {
         await verifyConnection(config, fetcher);
@@ -259,10 +266,9 @@ async function configureConnection(configFile, { reconfigure = false, prompt = p
     }
   }
   output.write('配置 Memory：用户凭证仅保存在本机，不会发送给模型。\n');
-  const defaultUrl = env.RUTTER_DIRECT_MEMORY_SERVER ? `${env.RUTTER_DIRECT_MEMORY_SERVER}/v3` : '';
   for (;;) {
-    const serviceUrl = await prompt(defaultUrl ? `Memory API 地址（回车使用 ${defaultUrl}）：` : 'Memory API 地址（HTTPS，包含 /v3）：') || defaultUrl;
-    const serviceId = await prompt('Service ID（回车使用 default）：') || 'default';
+    const serviceUrl = quickSetup ? defaultUrl : await prompt(defaultUrl ? `Memory API 地址（回车使用 ${defaultUrl}）：` : 'Memory API 地址（HTTPS，包含 /v3）：') || defaultUrl;
+    const serviceId = quickSetup ? 'default' : await prompt('Service ID（回车使用 default）：') || 'default';
     const userKey = await prompt('Memory 用户凭证（User_Key，输入时不显示）：', { hidden: true });
     const config = { service_url: serviceUrl.replace(/\/$/, ''), service_id: serviceId, memory_user_key: userKey };
     try { validateNewConfig(config); }
