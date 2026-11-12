@@ -20,6 +20,18 @@ Windows PowerShell 可使用 `npx.cmd`。安装包从 GitHub 下载，无需登�
 
 远程 API 必须使用 HTTPS。`http://127.0.0.1:8424/v3` 适用于本机 Knowledge；若使用 `http://127.0.0.1:18424/v3` 连接远程服务，须先建立并保持本机 18424 到远程 Knowledge 的转发。只有 HTTP 面板入口时，管理员还需提供 HTTPS API，或为已有 SSH 权限的用户安排转发。GitHub 下载只解决安装包分发，不会自动提供服务端 HTTPS 或 SSH 通道。
 
+## 当前服务器无需 SSH 的接入方式
+
+当前部署的 HTTPS Memory API 为 `https://efficiencybyai.com/knowledge/v3`。可以直接访问，无需 SSH 转发或服务器密码；仍需填写你自己的 Memory User_Key。
+
+首次安装可在安装命令后追加 `--server https://efficiencybyai.com/knowledge`。已安装过本机或 SSH 转发配置时，运行：
+
+```sh
+npx --yes --allow-remote=all https://github.com/NyaRu-Kiss/rutter-direct-memory/releases/download/v0.1.2/rutter-direct-memory-0.1.2.tgz --server https://efficiencybyai.com/knowledge --reconfigure
+```
+
+Windows PowerShell 使用 `npx.cmd`。Memory API 地址回车使用预填值，Service ID 回车使用 `default`，凭证填写服务器面板创建的完整 User_Key。完成后重启客户端并开启新会话，旧 SSH 转发窗口可以按 Ctrl+C 退出。`--server` 不带 `/v3`；直接填写 API 地址时须保留 `/knowledge/v3`。
+
 ## 已安装过，为什么没有询问配置
 
 本机已有 `~/.config/rutter-direct-memory/config.json` 时，安装器先验证已有地址、Service ID 和凭证。通过后复用；格式错误或凭证无效时引导重新填写。普通安装不会自动切换到新的服务器。
