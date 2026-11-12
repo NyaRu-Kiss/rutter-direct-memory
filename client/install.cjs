@@ -182,7 +182,7 @@ function validateNewConfig(config) {
     throw new Error('服务地址必须是 HTTPS 的 /v3 API 地址；仅 localhost 可使用 HTTP。');
   }
   if (!/^[A-Za-z0-9_-]{1,200}$/.test(config.service_id)) throw new Error('Service ID 只能包含字母、数字、下划线和连字符。');
-  if (!config.memory_user_key || /[\r\n]/.test(config.memory_user_key)) throw new Error('Memory 用户凭证不能为空或包含换行。');
+  if (!/^sk-mem-[A-Za-z0-9_-]{32}$/.test(config.memory_user_key || '')) throw new Error('Memory 用户凭证必须是目标实例的完整 User_Key（sk-mem- 开头）；不能填写 default、Service ID 或密码。');
 }
 
 function promptLine(label, { hidden = false } = {}) {
@@ -202,6 +202,7 @@ function promptLine(label, { hidden = false } = {}) {
     const finish = (error, answer) => {
       stdin.off('data', onData);
       stdin.setRawMode(Boolean(wasRaw));
+      stdin.pause();
       process.stdout.write('\n');
       error ? reject(error) : resolve(answer);
     };
@@ -217,15 +218,63 @@ function promptLine(label, { hidden = false } = {}) {
   });
 }
 
-async function configureInteractive(configFile) {
-  process.stdout.write('首次配置：Memory 用户凭证仅保存在本机，不会发送给模型。\n');
-  const defaultUrl = process.env.RUTTER_DIRECT_MEMORY_SERVER ? `${process.env.RUTTER_DIRECT_MEMORY_SERVER}/v3` : '';
-  const serviceUrl = await promptLine(defaultUrl ? `Memory API 地址（回车使用 ${defaultUrl}）：` : 'Memory API 地址（HTTPS，包含 /v3）：') || defaultUrl;
-  const serviceId = await promptLine('Service ID：');
-  const userKey = await promptLine('Memory 用户凭证（输入时不显示）：', { hidden: true });
-  const config = { service_url: serviceUrl.replace(/\/$/, ''), service_id: serviceId, memory_user_key: userKey };
-  validateNewConfig(config);
-  atomicWrite(configFile, `${JSON.stringify(config, null, 2)}\n`, 0o600);
+async function verifyConnection(config, fetcher = fetch) {
+  let response;
+  try {
+    response = await fetcher(`${config.service_url}/hierarchy/direct-memory/catalog`, {
+      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15000),
+      headers: { 'content-type': 'application/json', 'x-tdai-service-id': config.service_id, 'x-tdai-user-key': config.memory_user_key },
+      body: '{}',
+    });
+  } catch {
+    throw new Error('无法连接 Memory 服务，配置未保存。请检查地址、网络；使用 SSH 转发时请保持转发运行，然后重新安装。');
+  }
+  let envelope;
+  try { envelope = await response.json(); } catch {
+    throw new Error('Memory 服务返回了无法识别的响应，配置未保存。请确认使用的是 /v3 API 地址。');
+  }
+  if ([401, 403].includes(response.status) || [401, 403].includes(envelope?.code)) {
+    const error = new Error('Memory 用户凭证无效、已过期或无访问权限，请检查 Service ID 并使用目标实例的 User_Key 重新配置。');
+    error.reconfigure = true;
+    throw error;
+  }
+  if (!response.ok || envelope?.code !== 0 || !Array.isArray(envelope?.data?.teams)) {
+    throw new Error('Memory 服务验证失败，配置未保存。请检查服务状态及 /v3 API 地址后重新安装。');
+  }
+}
+
+async function configureConnection(configFile, { reconfigure = false, prompt = promptLine, fetcher = fetch, output = process.stdout, env = process.env } = {}) {
+  if (!reconfigure && fs.existsSync(configFile)) {
+    let config;
+    try { config = readConfig(configFile); validateNewConfig(config); }
+    catch { config = undefined; output.write('已有 Memory 配置格式无效，请重新填写；验证成功前保留原配置。\n'); }
+    if (config) {
+      try {
+        await verifyConnection(config, fetcher);
+        return { config, changed: false };
+      } catch (error) {
+        if (!error.reconfigure) throw error;
+        output.write(`${error.message}\n`);
+      }
+    }
+  }
+  output.write('配置 Memory：用户凭证仅保存在本机，不会发送给模型。\n');
+  const defaultUrl = env.RUTTER_DIRECT_MEMORY_SERVER ? `${env.RUTTER_DIRECT_MEMORY_SERVER}/v3` : '';
+  for (;;) {
+    const serviceUrl = await prompt(defaultUrl ? `Memory API 地址（回车使用 ${defaultUrl}）：` : 'Memory API 地址（HTTPS，包含 /v3）：') || defaultUrl;
+    const serviceId = await prompt('Service ID（回车使用 default）：') || 'default';
+    const userKey = await prompt('Memory 用户凭证（User_Key，输入时不显示）：', { hidden: true });
+    const config = { service_url: serviceUrl.replace(/\/$/, ''), service_id: serviceId, memory_user_key: userKey };
+    try { validateNewConfig(config); }
+    catch (error) { output.write(`${error.message}\n请重新填写。\n`); continue; }
+    try {
+      await verifyConnection(config, fetcher);
+      return { config, changed: true };
+    } catch (error) {
+      if (!error.reconfigure) throw error;
+      output.write(`${error.message}\n`);
+    }
+  }
 }
 
 function writePrepared(file, prepared) {
@@ -285,27 +334,35 @@ function parseArgs(args) {
   return parsed;
 }
 
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
+async function main(argv = process.argv.slice(2), { home, codexHome, env = process.env, prompt, fetcher, output = process.stdout } = {}) {
+  const args = parseArgs(argv);
   if (args.help) {
     process.stdout.write('用法：node install.cjs [--client both|codex|claude] [--reconfigure] [--uninstall]\n首次安装会交互式收集 Memory API 地址、Service ID 和 Memory 用户凭证；凭证不回显并以 0600 权限保存。\n');
     return;
   }
-  const filePaths = paths();
+  const filePaths = paths(home, codexHome);
   if (args.uninstall) {
-    const result = uninstall({ client: args.client });
+    const result = uninstall({ client: args.client, home, codexHome });
     process.stdout.write(`已移除 Hook：${result.changed.length ? result.changed.join(', ') : '没有需要移除的配置'}\n`);
     return;
   }
-  if (args.reconfigure || !fs.existsSync(filePaths.config)) await configureInteractive(filePaths.config);
-  readConfig(filePaths.config);
-  const result = install({ client: args.client });
-  process.stdout.write(`已安装 ${args.client} Hook。Memory 凭证保存在 ${filePaths.config}（仅当前用户可读）。\n`);
-  if (result.backups.length) process.stdout.write(`原设置已备份：${result.backups.join(', ')}\n`);
-  process.stdout.write('下次运行 Codex 时，若出现 Hook 信任确认，请检查命令路径后在客户端确认；安装器不会绕过该确认。\n');
+  const prepared = await configureConnection(filePaths.config, { reconfigure: args.reconfigure, prompt, fetcher, output, env });
+  const result = install({ client: args.client, home, codexHome });
+  if (prepared.changed) {
+    const saved = backup(filePaths.config);
+    if (saved) { fs.chmodSync(saved, 0o600); result.backups.push(saved); }
+    atomicWrite(filePaths.config, `${JSON.stringify(prepared.config, null, 2)}\n`, 0o600);
+  }
+  fs.chmodSync(filePaths.config, 0o600);
+  await require('./upload.cjs').enableAfterInstall({ ...env, HOME: filePaths.home, RUTTER_DIRECT_MEMORY_CONFIG: filePaths.config });
+  output.write(`Memory 连接及用户凭证验证成功，已安装 ${args.client} Hook 和 MCP。Memory 凭证保存在 ${filePaths.config}（仅当前用户可读）。\n`);
+  output.write('上传总开关已开启（包括重新安装或升级）；新会话默认勾选上传用户文本和最终助手回复到项目 L0，可在选择页取消勾选或选择本次不使用 Memory。\n');
+  if (result.backups.length) output.write(`原设置已备份：${result.backups.join(', ')}\n`);
+  output.write('下次运行 Codex 时，若出现 Hook 信任确认，请检查命令路径后在客户端确认；安装器不会绕过该确认。\n');
+  return result;
 }
 
 if (require.main === module) main().catch(error => { process.stderr.write(`${error.message}\n`); process.exitCode = 1; });
 
 module.exports = { paths, atomicWrite, backup, shellQuote, quoteCommandPath, claudeCommand, codexCommand, codexWindowsCommand, prepareClaude, removeClaude,
-  inspectCodexConfig, prepareCodex, removeCodex, validateNewConfig, install, uninstall, parseArgs };
+  inspectCodexConfig, prepareCodex, removeCodex, validateNewConfig, verifyConnection, configureConnection, install, uninstall, parseArgs, main };

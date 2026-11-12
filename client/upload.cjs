@@ -65,6 +65,16 @@ async function enableForSession(env = process.env) {
   });
 }
 
+async function enableAfterInstall(env = process.env) {
+  return withLock(env, async () => {
+    const fingerprint = configFingerprint(readConfig(configPath(env)));
+    const previous = readState(env);
+    // Preserve queued messages only when uploading remained enabled for the same identity.
+    if (previous.enabled && previous.fingerprint === fingerprint) return;
+    writeState(env, { ...emptyState(), enabled: true, since: Date.now(), fingerprint });
+  });
+}
+
 async function withLock(env, fn) {
   const dir = directory(env);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -233,4 +243,4 @@ async function main() {
   } else throw new Error('用法：node upload.cjs --enable|--disable|--status|--retry');
 }
 if (require.main === module) main().catch(error => { process.stderr.write(`${error.message}\n`); process.exitCode = 1; });
-module.exports = { readState, writeState, setConsent, enableForSession, capture, flush, retry, splitMessage, statePath };
+module.exports = { readState, writeState, setConsent, enableForSession, enableAfterInstall, capture, flush, retry, splitMessage, statePath };
