@@ -7,8 +7,11 @@ Run the public GitHub release with npm/npx; no GitHub login, repository clone,
 Git executable, SSH password, or download from the Memory server is required:
 
 ```sh
-npx --yes https://github.com/NyaRu-Kiss/rutter-direct-memory/releases/download/v0.1.0/rutter-direct-memory-0.1.0.tgz
+npx --yes --allow-remote=all https://github.com/NyaRu-Kiss/rutter-direct-memory/releases/download/v0.1.1/rutter-direct-memory-0.1.1.tgz
 ```
+
+The `--allow-remote=all` flag permits this intentional URL download for this
+command (required by npm 12); it does not change your saved npm settings.
 
 On Windows PowerShell, use `npx.cmd` if script execution policy blocks `npx.ps1`.
 MCP dependencies are bundled. The package has no install lifecycle scripts.
