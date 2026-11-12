@@ -1,0 +1,13 @@
+{
+  "name": "rutter-direct-memory",
+  "version": "0.1.0",
+  "description": "Install Rutter Memory hooks and MCP for Codex and Claude Code",
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "bin": { "rutter-direct-memory": "bin/cli.cjs" },
+  "files": ["bin/cli.cjs", "client/hook.cjs", "client/install.cjs", "client/mcp.cjs", "client/transcript.cjs", "client/upload.cjs", "client/bootstrap.cjs", "client/manifest.json", "README.md", "LICENSE", "THIRD_PARTY_LICENSES.txt"],
+  "repository": { "type": "git", "url": "https://github.com/NyaRu-Kiss/rutter-direct-memory.git" },
+  "bugs": { "url": "https://github.com/NyaRu-Kiss/rutter-direct-memory/issues" },
+  "publishConfig": { "access": "public" },
+  "keywords": ["memory", "mcp", "codex", "claude-code"]
+}
